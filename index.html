@@ -454,7 +454,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 // ═══════════════════════════════════════════════════════════
 const SB_URL = 'https://ayiqrsektppbgsscteja.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF5aXFyc2VrdHBwYmdzc2N0ZWphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzMzA4ODUsImV4cCI6MjA5NzkwNjg4NX0.1r31kGSjIvLEX6ktGMHM9zt9z-wKIIGBsgfBf14teO8';
-const HDR = {'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=representation'};
+const HDR = {'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'};
 
 async function sbGet(tabla, params=''){
   const r = await fetch(`${SB_URL}/rest/v1/${tabla}?${params}`, {headers:HDR});
@@ -462,8 +462,13 @@ async function sbGet(tabla, params=''){
   return r.json();
 }
 async function sbPost(tabla, data){
-  const r = await fetch(`${SB_URL}/rest/v1/${tabla}`, {method:'POST',headers:HDR,body:JSON.stringify(data)});
-  if(!r.ok) throw new Error(await r.text());
+  const h = {...HDR, 'Prefer':'return=representation'};
+  const r = await fetch(`${SB_URL}/rest/v1/${tabla}`, {method:'POST',headers:h,body:JSON.stringify(data)});
+  if(!r.ok){
+    const txt = await r.text();
+    console.error('sbPost error:', r.status, txt);
+    throw new Error(txt);
+  }
   return r.json();
 }
 async function sbPatch(tabla, data, params){
@@ -559,8 +564,8 @@ async function loadAll(){
     setSyncOK();
   } catch(e){
     console.error(e);
+    console.error('loadAll error:', e);
     setSyncError();
-    // Usar datos de demo si falla
     loadDemo();
   }
   renderAll();
@@ -852,9 +857,25 @@ async function guardarTx(){
     STATE.txs.unshift(saved[0]||{...tx,id:Date.now()});
     toast(STATE.tipo==='gasto'?'Gasto guardado ✓':'Ingreso guardado ✓');
   } catch(e) {
-    // Modo offline — guardar localmente
-    STATE.txs.unshift({...tx, id:Date.now()});
-    toast('Guardado localmente (sin conexión)','var(--gold)');
+    console.error('Error guardando:', e.message);
+    // Retry once
+    try {
+      const h = {'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=representation'};
+      const r2 = await fetch(SB_URL+'/rest/v1/movimientos', {method:'POST',headers:h,body:JSON.stringify(tx)});
+      if(r2.ok){
+        const saved2 = await r2.json();
+        STATE.txs.unshift(saved2[0]||{...tx,id:Date.now()});
+        toast(STATE.tipo==='gasto'?'Gasto guardado ✓':'Ingreso guardado ✓');
+      } else {
+        const errTxt = await r2.text();
+        console.error('Retry failed:', r2.status, errTxt);
+        STATE.txs.unshift({...tx, id:Date.now()});
+        toast('Error: '+r2.status+' — revisá conexión','var(--red)');
+      }
+    } catch(e2){
+      STATE.txs.unshift({...tx, id:Date.now()});
+      toast('Sin conexión — guardado local','var(--gold)');
+    }
   }
 
   document.getElementById('i-monto').value='';
@@ -953,6 +974,10 @@ function initUI(){
 
 initUI();
 loadAll();
+// Auto-sync cada 30 segundos para ver los gastos del otro
+setInterval(()=>{
+  loadAll();
+}, 30000);
 </script>
 </div>
 </body>
